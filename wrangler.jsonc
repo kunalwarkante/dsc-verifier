@@ -1,8 +1,12 @@
 {
+  "$schema": "node_modules/wrangler/config-schema.json",
   "name": "divine-cake-b5b1",
   "main": "src/index.js",
   "compatibility_date": "2026-08-12",
   "compatibility_flags": [
     "nodejs_compat"
-  ]
+  ],
+  "observability": {
+    "enabled": true
+  }
 }
