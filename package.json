@@ -14,3 +14,9 @@
     "wrangler": "^4.0.0"
   }
 }
+{
+  "dependencies": {
+    "pkijs": "3.4.0",
+    "asn1js": "3.0.10"
+  }
+}
