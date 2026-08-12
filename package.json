@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "description": "Digital Signature Certificate PDF Verification Tool",
-  "main": "src/index.js",
+  "type": "module",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy"
