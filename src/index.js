@@ -362,9 +362,9 @@ button:disabled{
 
         <br>
 
-        <button type="button">
-          Choose PDF
-        </button>
+<span class="choose-btn">
+  Choose PDF
+</span>
 
       </div>
 
