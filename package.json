@@ -1,0 +1,16 @@
+{
+  "name": "dsc-verifier",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "asn1js": "^3.0.5",
+    "pkijs": "^3.2.4"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
