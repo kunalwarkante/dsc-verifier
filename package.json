@@ -1,17 +1,14 @@
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
-
-  "name": "divine-cake-b5b1",
-
+  "name": "dsc-verifier",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Digital Signature Certificate PDF Verification Tool",
   "main": "src/index.js",
-
-  "compatibility_date": "2026-08-12",
-
-  "compatibility_flags": [
-    "nodejs_compat"
-  ],
-
-  "observability": {
-    "enabled": true
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.30.0"
   }
 }
