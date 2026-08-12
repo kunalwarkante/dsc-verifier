@@ -2,16 +2,15 @@
   "name": "dsc-verifier",
   "version": "1.0.0",
   "private": true,
-  "description": "Digital Signature Certificate PDF Verification Tool",
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
     "deploy": "wrangler deploy"
   },
   "dependencies": {
-    "asn1js": "3.0.10"
+    "asn1js": "^3.0.6",
+    "pkijs": "^3.4.0"
   },
   "devDependencies": {
-    "wrangler": "^4.30.0"
+    "wrangler": "^4.122.0"
   }
 }
