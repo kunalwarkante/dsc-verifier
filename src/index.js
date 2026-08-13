@@ -1203,10 +1203,106 @@ function extractSignatureContents(
 // HELPER: FIND SIGNER CERTIFICATE
 // ============================================================
 
-function findSignerCertificate(
-  signedData
-) {
+function findSignerCertificate(signedData) {
 
+  try {
+
+    const certificates =
+      Array.isArray(signedData.certificates)
+        ? signedData.certificates
+        : [];
+
+    const signerInfos =
+      Array.isArray(signedData.signerInfos)
+        ? signedData.signerInfos
+        : [];
+
+    if (
+      certificates.length === 0 ||
+      signerInfos.length === 0
+    ) {
+      return null;
+    }
+
+    const signerInfo =
+      signerInfos[0];
+
+    const sid =
+      signerInfo?.sid;
+
+    if (!sid) {
+      return null;
+    }
+
+    // ========================================================
+    // ISSUER + SERIAL NUMBER
+    // ========================================================
+
+    if (
+      sid instanceof
+      pkijs.IssuerAndSerialNumber
+    ) {
+
+      for (
+        const item of certificates
+      ) {
+
+        if (
+          !(item instanceof pkijs.Certificate)
+        ) {
+          continue;
+        }
+
+        const serialMatches =
+          compareArrayBuffers(
+            item.serialNumber?.valueBlock?.valueHex,
+            sid.serialNumber?.valueBlock?.valueHex
+          );
+
+        if (!serialMatches) {
+          continue;
+        }
+
+        const issuerMatches =
+          item.issuer?.isEqual(
+            sid.issuer
+          );
+
+        if (issuerMatches) {
+          return item;
+        }
+
+      }
+
+    }
+
+    // ========================================================
+    // FALLBACK
+    // ========================================================
+
+    for (
+      const item of certificates
+    ) {
+
+      if (
+        item instanceof pkijs.Certificate
+      ) {
+
+        return item;
+
+      }
+
+    }
+
+    return null;
+
+  } catch {
+
+    return null;
+
+  }
+
+}
   try {
 
     const certificates =
