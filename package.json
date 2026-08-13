@@ -7,10 +7,10 @@
     "deploy": "wrangler deploy"
   },
   "dependencies": {
-    "asn1js": "^3.0.6",
-    "pkijs": "^3.4.0"
+    "asn1js": "3.0.6",
+    "pkijs": "3.4.0"
   },
   "devDependencies": {
-    "wrangler": "^4.122.0"
+    "wrangler": "4.123.0"
   }
 }
