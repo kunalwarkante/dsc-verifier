@@ -1372,108 +1372,145 @@ function extractSignatureContents(
   firstEnd,
   secondStart
 ) {
-
   try {
 
+    // PDF ByteRange मधून signature चा excluded भाग
+    // थेट extract करतो.
     const signatureGap =
       pdfText.slice(
         firstEnd,
         secondStart
       );
 
+    /*
+      काही PDFs मध्ये /Contents हा gap मध्ये असतो,
+      काही PDFs मध्ये actual CMS hexadecimal block
+      थेट gap मध्ये मिळतो.
 
-    const matches =
+      म्हणून दोन्ही पद्धती try करतो.
+    */
+
+    // --------------------------------------------------------
+    // METHOD 1: /Contents <HEX>
+    // --------------------------------------------------------
+
+    const contentsMatch =
+      signatureGap.match(
+        /\/Contents\s*<([0-9A-Fa-f\s\r\n\t]+)>/
+      );
+
+    if (contentsMatch) {
+
+      const hex =
+        contentsMatch[1]
+          .replace(/\s+/g, "");
+
+      if (
+        hex.length >= 2 &&
+        hex.length % 2 === 0 &&
+        hex.toLowerCase().startsWith("30")
+      ) {
+
+        return hex;
+
+      }
+
+    }
+
+
+    // --------------------------------------------------------
+    // METHOD 2: ANY HEX BLOCK
+    // --------------------------------------------------------
+
+    const hexBlocks =
       signatureGap.match(
         /<([0-9A-Fa-f\s\r\n\t]+)>/g
       );
 
-
     if (
-      !matches ||
-      matches.length === 0
+      hexBlocks &&
+      hexBlocks.length
     ) {
 
-      return null;
+      let best =
+        null;
+
+
+      for (
+        const block of hexBlocks
+      ) {
+
+        const hex =
+          block
+            .slice(1, -1)
+            .replace(
+              /\s+/g,
+              ""
+            );
+
+
+        if (
+          hex.length < 2
+        ) {
+
+          continue;
+
+        }
+
+
+        if (
+          hex.length % 2 !== 0
+        ) {
+
+          continue;
+
+        }
+
+
+        // ASN.1 DER SEQUENCE
+        // normally starts with 30
+        if (
+          !hex
+            .toLowerCase()
+            .startsWith("30")
+        ) {
+
+          continue;
+
+        }
+
+
+        if (
+          !best ||
+          hex.length >
+          best.length
+        ) {
+
+          best =
+            hex;
+
+        }
+
+      }
+
+
+      if (best) {
+
+        return best;
+
+      }
 
     }
 
 
-    let bestHex =
-      null;
+    return null;
 
-
-    for (
-      const item of matches
-    ) {
-
-      const hex =
-        item
-          .slice(
-            1,
-            -1
-          )
-          .replace(
-            /\s+/g,
-            ""
-          );
-
-
-      if (
-        hex.length < 2
-      ) {
-
-        continue;
-
-      }
-
-
-      if (
-        hex.length % 2 !== 0
-      ) {
-
-        continue;
-
-      }
-
-
-      // CMS / PKCS#7 DER normally starts
-      // with ASN.1 SEQUENCE = 0x30.
-      if (
-        !hex
-          .toLowerCase()
-          .startsWith("30")
-      ) {
-
-        continue;
-
-      }
-
-
-      if (
-        !bestHex ||
-        hex.length >
-        bestHex.length
-      ) {
-
-        bestHex =
-          hex;
-
-      }
-
-    }
-
-
-    return bestHex;
-
-  } catch {
+  } catch (error) {
 
     return null;
 
   }
-
 }
-
-
 // ============================================================
 // FIND SIGNER CERTIFICATE
 // ============================================================
