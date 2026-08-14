@@ -422,12 +422,12 @@ export default {
         // EXTRACT CMS / PKCS#7
         // ====================================================
 
-        const contentsHex =
-          extractSignatureContents(
-            pdfText,
-            byteRangeMatch.index
-          );
-
+const contentsHex =
+  extractSignatureContents(
+    pdfText,
+    firstEnd,
+    rangeStart2
+  );
         if (!contentsHex) {
 
           result.verification = {
