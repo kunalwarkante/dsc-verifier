@@ -949,35 +949,45 @@ function hexToBytes(
 
 function extractSignatureContents(
   pdfText,
-  byteRangePosition
+  firstEnd,
+  secondStart
 ) {
 
-  const searchStart =
-    Math.max(
-      0,
-      byteRangePosition || 0
-    );
+  try {
 
-  const afterByteRange =
-    pdfText.slice(
-      searchStart
-    );
+    // The PDF signature contents are located
+    // inside the gap excluded by ByteRange.
 
-  const match =
-    afterByteRange.match(
-      /\/Contents\s*<([0-9A-Fa-f\s]+)>/
-    );
+    const signatureGap =
+      pdfText.slice(
+        firstEnd,
+        secondStart
+      );
 
-  if (!match) {
+    // Search ONLY inside the signature gap.
+    // This avoids accidentally reading another
+    // /Contents entry from the PDF.
+
+    const match =
+      signatureGap.match(
+        /\/Contents\s*<([0-9A-Fa-f\s]+)>/
+      );
+
+    if (!match) {
+
+      return null;
+
+    }
+
+    return match[1];
+
+  } catch {
 
     return null;
 
   }
 
-  return match[1];
-
 }
-
 
 // ============================================================
 // FIND SIGNER CERTIFICATE
