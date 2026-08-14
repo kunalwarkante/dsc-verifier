@@ -829,37 +829,52 @@ function hexToBytes(hex) {
    EXTRACT PDF /CONTENTS
    ============================================================ */
 
-function extractSignatureContents(
-  pdfText,
-  byteRangePosition
-) {
-  const searchStart =
-    Math.max(
+function extractSignatureContents(pdfText, byteRangePosition) {
+
+  const position =
+    typeof byteRangePosition === "number"
+      ? byteRangePosition
+      : pdfText.length;
+
+  // PDF signature dictionary normally contains
+  // /Contents BEFORE /ByteRange.
+  const beforeByteRange =
+    pdfText.slice(
       0,
-      byteRangePosition || 0
+      position
     );
 
-  const afterByteRange =
-    pdfText.slice(searchStart);
+  const matches = [
+    ...beforeByteRange.matchAll(
+      /\/Contents\s*<([0-9A-Fa-f\s]+)>/g
+    )
+  ];
 
-  /*
-   * Search specifically for a hexadecimal PDF Contents string.
-   *
-   * We intentionally stop at the first closing >.
-   */
+  if (matches.length > 0) {
 
-  const match =
-    afterByteRange.match(
-      /\/Contents\s*<([0-9A-Fa-f\s\r\n\t]+)>/
-    );
+    // Take the closest /Contents before ByteRange.
+    return matches[matches.length - 1][1];
 
-  if (!match) {
-    return null;
   }
 
-  return match[1];
-}
+  // Fallback: also search after ByteRange.
+  const afterByteRange =
+    pdfText.slice(position);
 
+  const afterMatches = [
+    ...afterByteRange.matchAll(
+      /\/Contents\s*<([0-9A-Fa-f\s]+)>/g
+    )
+  ];
+
+  if (afterMatches.length > 0) {
+
+    return afterMatches[0][1];
+
+  }
+
+  return null;
+}
 /* ============================================================
    FIND SIGNER CERTIFICATE
    ============================================================ */
