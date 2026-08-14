@@ -1,78 +1,82 @@
 import * as pkijs from "pkijs";
 import * as asn1js from "asn1js";
 
-/* ============================================================
-   PKI.JS CRYPTO ENGINE
-   ============================================================ */
+// ============================================================
+// PKI.JS CRYPTO ENGINE
+// Cloudflare Workers WebCrypto
+// ============================================================
 
 pkijs.setEngine(
   "CloudflareWebCrypto",
   new pkijs.CryptoEngine({
     name: "CloudflareWebCrypto",
-    crypto,
+    crypto: crypto,
     subtle: crypto.subtle
   })
 );
 
-/* ============================================================
-   WORKER
-   ============================================================ */
+
+// ============================================================
+// WORKER
+// ============================================================
 
 export default {
+
   async fetch(request) {
+
     const url = new URL(request.url);
 
-    /* ========================================================
-       STATUS
-       ======================================================== */
-
-    if (url.pathname === "/api/status") {
-      return json({
-        success: true,
-        service: "DSC Verifier API",
-        status: "online",
-        stage: "PDF ByteRange + CMS/PKCS#7 cryptographic verification"
-      });
-    }
-
-    /* ========================================================
-       VERIFY PDF
-       ======================================================== */
+    // ========================================================
+    // PDF VERIFY API
+    // ========================================================
 
     if (
       url.pathname === "/api/verify" &&
       request.method === "POST"
     ) {
+
       try {
+
         const contentType =
           request.headers.get("content-type") || "";
 
-        if (!contentType.includes("multipart/form-data")) {
-          return json(
-            {
-              success: false,
-              error:
-                "Please upload PDF using multipart/form-data."
-            },
-            400
-          );
+        if (
+          !contentType.includes("multipart/form-data")
+        ) {
+
+          return json({
+            success: false,
+            error:
+              "Please upload PDF using multipart/form-data."
+          }, 400);
+
         }
 
-        const formData = await request.formData();
-        const file = formData.get("file");
+        // ----------------------------------------------------
+        // FORM DATA
+        // ----------------------------------------------------
+
+        const formData =
+          await request.formData();
+
+        const file =
+          formData.get("file");
 
         if (
           !file ||
           typeof file.arrayBuffer !== "function"
         ) {
-          return json(
-            {
-              success: false,
-              error: "PDF file not found."
-            },
-            400
-          );
+
+          return json({
+            success: false,
+            error: "PDF file not found."
+          }, 400);
+
         }
+
+        // ----------------------------------------------------
+        // FILE VALIDATION
+        // ----------------------------------------------------
 
         const fileName =
           file.name || "uploaded.pdf";
@@ -82,87 +86,90 @@ export default {
           file.type === "application/pdf";
 
         if (!isPDF) {
-          return json(
-            {
-              success: false,
-              error: "Only PDF files are allowed."
-            },
-            400
-          );
+
+          return json({
+            success: false,
+            error: "Only PDF files are allowed."
+          }, 400);
+
         }
 
-        const MAX_SIZE = 20 * 1024 * 1024;
+        // ----------------------------------------------------
+        // 20 MB LIMIT
+        // ----------------------------------------------------
+
+        const MAX_SIZE =
+          20 * 1024 * 1024;
 
         if (file.size > MAX_SIZE) {
-          return json(
-            {
-              success: false,
-              error: "PDF size must be below 20 MB."
-            },
-            413
-          );
+
+          return json({
+            success: false,
+            error: "PDF size must be below 20 MB."
+          }, 413);
+
         }
 
-        /* ====================================================
-           READ PDF
-           ==================================================== */
+        // ----------------------------------------------------
+        // READ PDF
+        // ----------------------------------------------------
 
-        const buffer = await file.arrayBuffer();
-        const bytes = new Uint8Array(buffer);
+        const buffer =
+          await file.arrayBuffer();
 
-        const header = new TextDecoder()
-          .decode(bytes.slice(0, 8));
+        const bytes =
+          new Uint8Array(buffer);
+
+        // ----------------------------------------------------
+        // PDF HEADER
+        // ----------------------------------------------------
+
+        const header =
+          new TextDecoder()
+            .decode(bytes.slice(0, 8));
 
         if (!header.startsWith("%PDF-")) {
-          return json(
-            {
-              success: false,
-              error:
-                "Uploaded file is not a valid PDF."
-            },
-            400
-          );
+
+          return json({
+            success: false,
+            error: "Uploaded file is not a valid PDF."
+          }, 400);
+
         }
 
-        /*
-         * PDF text representation.
-         * The signature dictionaries in normal PDF files are
-         * ASCII-compatible, so this is used only for locating
-         * PDF objects. Cryptographic verification uses raw bytes.
-         */
+        // ----------------------------------------------------
+        // LATIN-1 PDF TEXT
+        // ----------------------------------------------------
 
         const pdfText =
-          new TextDecoder("latin1").decode(bytes);
+          new TextDecoder("latin1")
+            .decode(bytes);
 
-        /* ====================================================
-           FIND BYTE RANGE
-           ==================================================== */
+        // ====================================================
+        // SIGNATURE STRUCTURE
+        // ====================================================
 
-        const byteRangeMatch = pdfText.match(
-          /\/ByteRange\s*\[\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*\]/
-        );
+        const byteRangeMatch =
+          pdfText.match(
+            /\/ByteRange\s*\[\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*\]/
+          );
 
         const hasByteRange =
           !!byteRangeMatch;
 
-        /* ====================================================
-           SIGNATURE STRUCTURE
-           ==================================================== */
-
         const hasContents =
-          /\/Contents\s*</i.test(pdfText);
+          /\/Contents\s*</.test(pdfText);
 
         const hasSignatureType =
-          /\/Type\s*\/Sig\b/i.test(pdfText);
+          /\/Type\s*\/Sig\b/.test(pdfText);
 
         const hasPkcs7 =
-          /\/SubFilter\s*\/adbe\.pkcs7\.detached\b/i.test(pdfText) ||
-          /\/SubFilter\s*\/adbe\.pkcs7\.sha1\b/i.test(pdfText) ||
-          /\/SubFilter\s*\/ETSI\.CAdES\.detached\b/i.test(pdfText);
+          /\/SubFilter\s*\/adbe\.pkcs7\.detached\b/.test(pdfText) ||
+          /\/SubFilter\s*\/adbe\.pkcs7\.sha1\b/.test(pdfText) ||
+          /\/SubFilter\s*\/ETSI\.CAdES\.detached\b/.test(pdfText);
 
         const hasSignatureDictionary =
-          /\/Sig\s*<</i.test(pdfText) ||
-          /\/FT\s*\/Sig\b/i.test(pdfText);
+          /\/Sig\s*<<|\/Sig\s*\//.test(pdfText);
 
         const signatureDetected =
           hasByteRange ||
@@ -171,18 +178,20 @@ export default {
           hasPkcs7 ||
           hasSignatureDictionary;
 
-        /* ====================================================
-           RESULT OBJECT
-           ==================================================== */
+        // ====================================================
+        // INITIAL RESULT
+        // ====================================================
 
         const result = {
+
           success: true,
 
           file: {
             name: fileName,
             size: file.size,
             type:
-              file.type || "application/pdf"
+              file.type ||
+              "application/pdf"
           },
 
           pdf: {
@@ -191,95 +200,135 @@ export default {
           },
 
           signatureStructure: {
+
             byteRange: hasByteRange,
             contents: hasContents,
             signatureType: hasSignatureType,
             pkcs7SubFilter: hasPkcs7,
             signatureDictionary:
               hasSignatureDictionary
+
           },
 
           verification: {
+
             status: "NOT_VERIFIED",
 
             cryptographicVerification: false,
+
             documentIntegrity: false,
 
             certificatePresent: false,
+
             certificateChainVerified: false,
 
-            signer: null,
-            issuer: null,
-            serialNumber: null,
+            certificateValidity: false,
 
-            certificateCount: 0,
+            certificateStatus: "NOT_CHECKED",
+
+            validFrom: null,
+
+            validUntil: null,
+
+            signer: null,
+
+            issuer: null,
+
+            serialNumber: null,
 
             message:
               "Signature has not been cryptographically verified."
+
           }
+
         };
 
-        /* ====================================================
-           NO SIGNATURE
-           ==================================================== */
+        // ====================================================
+        // NO SIGNATURE
+        // ====================================================
 
         if (!signatureDetected) {
+
           result.verification = {
+
             status: "NO_SIGNATURE",
 
             cryptographicVerification: false,
+
             documentIntegrity: false,
 
             certificatePresent: false,
+
             certificateChainVerified: false,
 
-            signer: null,
-            issuer: null,
-            serialNumber: null,
+            certificateValidity: false,
 
-            certificateCount: 0,
+            certificateStatus: "NOT_CHECKED",
+
+            validFrom: null,
+
+            validUntil: null,
+
+            signer: null,
+
+            issuer: null,
+
+            serialNumber: null,
 
             message:
               "No PDF digital signature was detected."
+
           };
 
           return json(result);
+
         }
 
-        /* ====================================================
-           BYTE RANGE REQUIRED
-           ==================================================== */
+        // ====================================================
+        // BYTE RANGE
+        // ====================================================
 
         if (!byteRangeMatch) {
+
           result.verification = {
+
             status: "UNABLE_TO_VERIFY",
 
             cryptographicVerification: false,
+
             documentIntegrity: false,
 
             certificatePresent: false,
+
             certificateChainVerified: false,
 
-            signer: null,
-            issuer: null,
-            serialNumber: null,
+            certificateValidity: false,
 
-            certificateCount: 0,
+            certificateStatus: "NOT_CHECKED",
+
+            validFrom: null,
+
+            validUntil: null,
+
+            signer: null,
+
+            issuer: null,
+
+            serialNumber: null,
 
             message:
               "Digital signature structure detected, but PDF ByteRange could not be parsed."
+
           };
 
           return json(result);
+
         }
 
-        /* ====================================================
-           BYTE RANGE VALUES
-           ==================================================== */
-
-        const byteRange = byteRangeMatch
-          .slice(1)
-          .map(Number);
+        const byteRange =
+          byteRangeMatch
+            .slice(1)
+            .map(Number);
 
         const [
           rangeStart1,
@@ -288,29 +337,15 @@ export default {
           rangeLength2
         ] = byteRange;
 
-        result.signatureStructure.byteRangeValues =
-          byteRange;
-
         const firstEnd =
-          rangeStart1 + rangeLength1;
+          rangeStart1 +
+          rangeLength1;
 
         const secondEnd =
-          rangeStart2 + rangeLength2;
-
-        /*
-         * A normal PDF signature ByteRange has:
-         *
-         * [0, signedLength1, signatureStart, signedLength2]
-         *
-         * The second range normally begins after the first
-         * signed section and covers the remainder of the PDF.
-         */
+          rangeStart2 +
+          rangeLength2;
 
         const byteRangeValid =
-          Number.isSafeInteger(rangeStart1) &&
-          Number.isSafeInteger(rangeLength1) &&
-          Number.isSafeInteger(rangeStart2) &&
-          Number.isSafeInteger(rangeLength2) &&
           rangeStart1 === 0 &&
           rangeLength1 >= 0 &&
           rangeStart2 >= firstEnd &&
@@ -318,35 +353,52 @@ export default {
           firstEnd <= bytes.length &&
           secondEnd <= bytes.length;
 
+        result.signatureStructure.byteRangeValues =
+          byteRange;
+
         result.signatureStructure.byteRangeValid =
           byteRangeValid;
 
         if (!byteRangeValid) {
+
           result.verification = {
+
             status: "INVALID",
 
             cryptographicVerification: false,
+
             documentIntegrity: false,
 
             certificatePresent: false,
+
             certificateChainVerified: false,
 
-            signer: null,
-            issuer: null,
-            serialNumber: null,
+            certificateValidity: false,
 
-            certificateCount: 0,
+            certificateStatus: "NOT_CHECKED",
+
+            validFrom: null,
+
+            validUntil: null,
+
+            signer: null,
+
+            issuer: null,
+
+            serialNumber: null,
 
             message:
               "PDF ByteRange is invalid or outside the uploaded file."
+
           };
 
           return json(result);
+
         }
 
-        /* ====================================================
-           CREATE EXACT SIGNED PDF DATA
-           ==================================================== */
+        // ====================================================
+        // SIGNED DATA
+        // ====================================================
 
         const signedPart1 =
           bytes.slice(
@@ -366,9 +418,9 @@ export default {
             signedPart2
           );
 
-        /* ====================================================
-           EXTRACT SIGNATURE CONTENTS
-           ==================================================== */
+        // ====================================================
+        // EXTRACT CMS / PKCS#7
+        // ====================================================
 
         const contentsHex =
           extractSignatureContents(
@@ -377,69 +429,94 @@ export default {
           );
 
         if (!contentsHex) {
+
           result.verification = {
+
             status: "UNABLE_TO_VERIFY",
 
             cryptographicVerification: false,
+
             documentIntegrity: false,
 
             certificatePresent: false,
+
             certificateChainVerified: false,
 
-            signer: null,
-            issuer: null,
-            serialNumber: null,
+            certificateValidity: false,
 
-            certificateCount: 0,
+            certificateStatus: "NOT_CHECKED",
+
+            validFrom: null,
+
+            validUntil: null,
+
+            signer: null,
+
+            issuer: null,
+
+            serialNumber: null,
 
             message:
               "PDF signature dictionary was found, but /Contents could not be extracted."
+
           };
 
           return json(result);
-        }
 
-        /* ====================================================
-           HEX -> CMS BYTES
-           ==================================================== */
+        }
 
         let cmsBytes;
 
         try {
+
           cmsBytes =
             hexToBytes(contentsHex);
-        } catch (error) {
+
+        } catch {
+
           result.verification = {
+
             status: "UNABLE_TO_VERIFY",
 
             cryptographicVerification: false,
+
             documentIntegrity: false,
 
             certificatePresent: false,
+
             certificateChainVerified: false,
 
+            certificateValidity: false,
+
+            certificateStatus: "NOT_CHECKED",
+
+            validFrom: null,
+
+            validUntil: null,
+
             signer: null,
+
             issuer: null,
+
             serialNumber: null,
 
-            certificateCount: 0,
-
             message:
-              "Unable to decode PDF signature /Contents: " +
-              safeError(error)
+              "Unable to decode the PDF signature /Contents."
+
           };
 
           return json(result);
+
         }
 
-        /* ====================================================
-           CMS / PKCS#7 PARSING
-           ==================================================== */
+        // ====================================================
+        // ASN.1 / CMS PARSE
+        // ====================================================
 
-        let cms;
         let signedDataObject;
 
         try {
+
           const cmsParse =
             asn1js.fromBER(cmsBytes);
 
@@ -447,12 +524,14 @@ export default {
             cmsParse.offset === -1 ||
             !cmsParse.result
           ) {
+
             throw new Error(
               "ASN.1 CMS parsing failed."
             );
+
           }
 
-          cms =
+          const cms =
             new pkijs.ContentInfo({
               schema: cmsParse.result
             });
@@ -461,9 +540,11 @@ export default {
             cms.contentType !==
             pkijs.ContentInfo.SIGNED_DATA
           ) {
+
             throw new Error(
               "Embedded signature is not CMS SignedData."
             );
+
           }
 
           signedDataObject =
@@ -472,32 +553,49 @@ export default {
             });
 
         } catch (error) {
+
           result.verification = {
+
             status: "UNABLE_TO_VERIFY",
 
             cryptographicVerification: false,
+
             documentIntegrity: false,
 
             certificatePresent: false,
+
             certificateChainVerified: false,
 
-            signer: null,
-            issuer: null,
-            serialNumber: null,
+            certificateValidity: false,
 
-            certificateCount: 0,
+            certificateStatus: "NOT_CHECKED",
+
+            validFrom: null,
+
+            validUntil: null,
+
+            signer: null,
+
+            issuer: null,
+
+            serialNumber: null,
 
             message:
               "CMS/PKCS#7 signature could not be parsed: " +
-              safeError(error)
+              (
+                error?.message ||
+                "Unknown parsing error."
+              )
+
           };
 
           return json(result);
+
         }
 
-        /* ====================================================
-           CERTIFICATE COUNT
-           ==================================================== */
+        // ====================================================
+        // CERTIFICATES
+        // ====================================================
 
         const certificates =
           Array.isArray(
@@ -506,78 +604,102 @@ export default {
             ? signedDataObject.certificates
             : [];
 
-        result.verification.certificateCount =
-          certificates.filter(
-            item =>
-              item instanceof pkijs.Certificate
-          ).length;
-
-        /* ====================================================
-           INITIAL CERTIFICATE LOOKUP
-           ==================================================== */
-
-        let signerCertificate =
+        const signerCertificate =
           findSignerCertificate(
             signedDataObject
           );
 
         if (signerCertificate) {
-          applyCertificateInfo(
-            result,
-            signerCertificate
-          );
+
+          result.verification.certificatePresent =
+            true;
+
+          result.verification.signer =
+            getCertificateSubject(
+              signerCertificate
+            );
+
+          result.verification.issuer =
+            getCertificateIssuer(
+              signerCertificate
+            );
+
+          result.verification.serialNumber =
+            safeCertificateSerial(
+              signerCertificate
+            );
+
+          // ==================================================
+          // CERTIFICATE VALIDITY
+          // ==================================================
+
+          const validity =
+            getCertificateValidity(
+              signerCertificate
+            );
+
+          result.verification.validFrom =
+            validity.validFrom;
+
+          result.verification.validUntil =
+            validity.validUntil;
+
+          result.verification.certificateStatus =
+            validity.status;
+
+          result.verification.certificateValidity =
+            validity.valid;
+
         }
 
-        /* ====================================================
-           CRYPTOGRAPHIC VERIFICATION
-           ==================================================== */
+        result.verification.certificateCount =
+          certificates.length;
+
+        // ====================================================
+        // CRYPTOGRAPHIC VERIFICATION
+        // ====================================================
 
         try {
-          /*
-           * PKI.js supports detached SignedData verification
-           * through the "data" parameter.
-           *
-           * The data here is EXACTLY the two PDF ByteRange
-           * portions concatenated together.
-           */
 
           const verifyResult =
             await signedDataObject.verify({
+
               signer: 0,
+
               data: signedData,
+
               checkChain: false
+
             });
 
-          let signatureVerified = false;
-          let signerCertificateVerified = false;
+          let signatureVerified =
+            false;
 
-          let verificationMessage =
+          let signerCertificateVerified =
+            false;
+
+          let message =
             "Cryptographic verification failed.";
 
-          /*
-           * PKI.js 3.x normally returns a result object.
-           * Some versions/configurations can return boolean.
-           */
-
           if (
-            typeof verifyResult === "boolean"
+            typeof verifyResult ===
+            "boolean"
           ) {
+
             signatureVerified =
               verifyResult;
 
-            verificationMessage =
-              signatureVerified
-                ? "PDF digital signature is cryptographically valid."
-                : "PDF digital signature verification failed.";
-
           } else {
+
             signatureVerified =
-              verifyResult?.signatureVerified === true;
+              verifyResult
+                ?.signatureVerified === true;
 
             signerCertificateVerified =
-              verifyResult?.signerCertificateVerified === true;
+              verifyResult
+                ?.signerCertificateVerified === true;
 
-            verificationMessage =
+            message =
               verifyResult?.message ||
               (
                 signatureVerified
@@ -585,139 +707,109 @@ export default {
                   : "PDF digital signature verification failed."
               );
 
-            /*
-             * IMPORTANT:
-             *
-             * PKI.js itself can return the signer certificate
-             * from verify().
-             *
-             * This is more reliable than assuming the first
-             * certificate in SignedData is the signer.
-             */
-
-            if (
-              verifyResult?.signerCertificate
-            ) {
-              signerCertificate =
-                verifyResult.signerCertificate;
-
-              applyCertificateInfo(
-                result,
-                signerCertificate
-              );
-            }
           }
 
           result.verification
             .cryptographicVerification =
               signatureVerified;
 
-          /*
-           * If the cryptographic signature over the PDF
-           * ByteRange verifies, the signed PDF bytes are intact.
-           */
-
-          result.verification
-            .documentIntegrity =
-              signatureVerified;
+          result.verification.documentIntegrity =
+            signatureVerified;
 
           result.verification
             .certificateChainVerified =
               signerCertificateVerified;
 
-          result.verification
-            .verificationMessage =
-              verificationMessage;
+          result.verification.verificationMessage =
+            message;
 
-          /* ==================================================
-             FINAL STATUS
-             ================================================== */
+          // ==================================================
+          // FINAL STATUS
+          // ==================================================
 
           if (signatureVerified) {
+
             result.verification.status =
               "CRYPTOGRAPHICALLY_VALID";
 
             result.verification.message =
-              "Digital signature cryptographically verified against the PDF ByteRange.";
+              "Digital signature cryptographically verified against the exact PDF ByteRange.";
 
           } else {
+
             result.verification.status =
               "INVALID";
 
             result.verification.message =
               "Digital signature verification failed. The PDF content or signature may have been modified.";
+
           }
 
         } catch (error) {
-          /*
-           * PKI.js can throw SignedDataVerifyError while still
-           * exposing useful verification properties.
-           */
-
-          if (
-            error?.signerCertificate
-          ) {
-            signerCertificate =
-              error.signerCertificate;
-
-            applyCertificateInfo(
-              result,
-              signerCertificate
-            );
-          }
-
-          if (
-            typeof error?.signatureVerified ===
-            "boolean"
-          ) {
-            result.verification
-              .cryptographicVerification =
-                error.signatureVerified;
-
-            result.verification
-              .documentIntegrity =
-                error.signatureVerified;
-          }
-
-          if (
-            typeof error?.signerCertificateVerified ===
-            "boolean"
-          ) {
-            result.verification
-              .certificateChainVerified =
-                error.signerCertificateVerified;
-          }
 
           result.verification.status =
             "UNABLE_TO_VERIFY";
 
+          result.verification
+            .cryptographicVerification =
+              false;
+
+          result.verification.documentIntegrity =
+            false;
+
           result.verification.message =
             "Cryptographic verification could not be completed: " +
-            safeError(error);
-        }
+            (
+              error?.message ||
+              "Unsupported signature or algorithm."
+            );
 
-        /* ====================================================
-           FINAL RESPONSE
-           ==================================================== */
+        }
 
         return json(result);
 
       } catch (error) {
-        return json(
-          {
-            success: false,
-            error:
-              safeError(error) ||
-              "Unable to process PDF."
-          },
-          500
-        );
+
+        return json({
+
+          success: false,
+
+          error:
+            error?.message ||
+            "Unable to process PDF."
+
+        }, 500);
+
       }
+
     }
 
-    /* ========================================================
-       FRONTEND
-       ======================================================== */
+    // ========================================================
+    // STATUS API
+    // ========================================================
+
+    if (
+      url.pathname === "/api/status"
+    ) {
+
+      return json({
+
+        success: true,
+
+        service: "DSC Verifier API",
+
+        status: "online",
+
+        stage:
+          "PDF structure + CMS/PKCS#7 cryptographic verification + certificate validity"
+
+      });
+
+    }
+
+    // ========================================================
+    // FRONTEND
+    // ========================================================
 
     return new Response(
       FRONTEND_HTML,
@@ -731,18 +823,30 @@ export default {
         }
       }
     );
+
   }
+
 };
 
-/* ============================================================
-   JSON HELPER
-   ============================================================ */
 
-function json(data, status = 200) {
+// ============================================================
+// JSON
+// ============================================================
+
+function json(
+  data,
+  status = 200
+) {
+
   return new Response(
-    JSON.stringify(data, null, 2),
+    JSON.stringify(
+      data,
+      null,
+      2
+    ),
     {
       status,
+
       headers: {
         "content-type":
           "application/json; charset=UTF-8",
@@ -752,57 +856,67 @@ function json(data, status = 200) {
       }
     }
   );
+
 }
 
-/* ============================================================
-   ERROR HELPER
-   ============================================================ */
 
-function safeError(error) {
-  return (
-    error?.message ||
-    String(error || "Unknown error")
-  );
-}
+// ============================================================
+// CONCAT BYTES
+// ============================================================
 
-/* ============================================================
-   CONCAT BYTES
-   ============================================================ */
+function concatBytes(
+  a,
+  b
+) {
 
-function concatBytes(a, b) {
   const output =
     new Uint8Array(
-      a.length + b.length
+      a.length +
+      b.length
     );
 
   output.set(a, 0);
-  output.set(b, a.length);
+
+  output.set(
+    b,
+    a.length
+  );
 
   return output;
+
 }
 
-/* ============================================================
-   HEX -> BYTES
-   ============================================================ */
 
-function hexToBytes(hex) {
+// ============================================================
+// HEX -> BYTES
+// ============================================================
+
+function hexToBytes(
+  hex
+) {
+
   const clean =
-    String(hex)
-      .replace(
-        /[^0-9a-fA-F]/g,
-        ""
-      );
+    hex.replace(
+      /[^0-9a-fA-F]/g,
+      ""
+    );
 
   if (!clean.length) {
+
     throw new Error(
       "Empty signature contents."
     );
+
   }
 
-  if (clean.length % 2 !== 0) {
+  if (
+    clean.length % 2 !== 0
+  ) {
+
     throw new Error(
       "Invalid hexadecimal signature."
     );
+
   }
 
   const bytes =
@@ -815,93 +929,87 @@ function hexToBytes(hex) {
     i < clean.length;
     i += 2
   ) {
+
     bytes[i / 2] =
       parseInt(
         clean.slice(i, i + 2),
         16
       );
+
   }
 
   return bytes;
+
 }
 
-/* ============================================================
-   EXTRACT PDF /CONTENTS
-   ============================================================ */
 
-function extractSignatureContents(pdfText, byteRangePosition) {
+// ============================================================
+// EXTRACT /CONTENTS
+// ============================================================
 
-  const position =
-    typeof byteRangePosition === "number"
-      ? byteRangePosition
-      : pdfText.length;
+function extractSignatureContents(
+  pdfText,
+  byteRangePosition
+) {
 
-  // PDF signature dictionary normally contains
-  // /Contents BEFORE /ByteRange.
-  const beforeByteRange =
-    pdfText.slice(
+  const searchStart =
+    Math.max(
       0,
-      position
+      byteRangePosition || 0
     );
 
-  const matches = [
-    ...beforeByteRange.matchAll(
-      /\/Contents\s*<([0-9A-Fa-f\s]+)>/g
-    )
-  ];
-
-  if (matches.length > 0) {
-
-    // Take the closest /Contents before ByteRange.
-    return matches[matches.length - 1][1];
-
-  }
-
-  // Fallback: also search after ByteRange.
   const afterByteRange =
-    pdfText.slice(position);
+    pdfText.slice(
+      searchStart
+    );
 
-  const afterMatches = [
-    ...afterByteRange.matchAll(
-      /\/Contents\s*<([0-9A-Fa-f\s]+)>/g
-    )
-  ];
+  const match =
+    afterByteRange.match(
+      /\/Contents\s*<([0-9A-Fa-f\s]+)>/
+    );
 
-  if (afterMatches.length > 0) {
+  if (!match) {
 
-    return afterMatches[0][1];
+    return null;
 
   }
 
-  return null;
+  return match[1];
+
 }
-/* ============================================================
-   FIND SIGNER CERTIFICATE
-   ============================================================ */
+
+
+// ============================================================
+// FIND SIGNER CERTIFICATE
+// ============================================================
 
 function findSignerCertificate(
   signedData
 ) {
+
   try {
+
     const certificates =
       Array.isArray(
-        signedData?.certificates
+        signedData.certificates
       )
         ? signedData.certificates
         : [];
 
     const signerInfos =
       Array.isArray(
-        signedData?.signerInfos
+        signedData.signerInfos
       )
         ? signedData.signerInfos
         : [];
 
     if (
-      !certificates.length ||
-      !signerInfos.length
+      certificates.length === 0 ||
+      signerInfos.length === 0
     ) {
+
       return null;
+
     }
 
     const signerInfo =
@@ -911,298 +1019,277 @@ function findSignerCertificate(
       signerInfo?.sid;
 
     if (!sid) {
+
       return null;
+
     }
 
-    /*
-     * Standard CMS signer identifier:
-     *
-     * IssuerAndSerialNumber
-     */
+    // --------------------------------------------------------
+    // ISSUER + SERIAL MATCH
+    // --------------------------------------------------------
 
     if (
       sid instanceof
       pkijs.IssuerAndSerialNumber
     ) {
+
       for (
         const item of certificates
       ) {
+
         if (
           !(item instanceof pkijs.Certificate)
         ) {
+
           continue;
+
         }
 
         const serialMatches =
           compareArrayBuffers(
-            item?.serialNumber
+            item.serialNumber
               ?.valueBlock
               ?.valueHex,
 
-            sid?.serialNumber
+            sid.serialNumber
               ?.valueBlock
               ?.valueHex
           );
 
         if (!serialMatches) {
+
           continue;
+
         }
 
         try {
+
           if (
-            item?.issuer?.isEqual &&
-            item.issuer.isEqual(
+            item.issuer?.isEqual(
               sid.issuer
             )
           ) {
+
             return item;
+
           }
+
         } catch {
-          /* continue */
+
+          // Continue fallback
+
         }
+
       }
+
     }
 
-    /*
-     * SubjectKeyIdentifier signer identifier
-     *
-     * Some modern CMS signatures use SKI instead of
-     * issuer + serial.
-     */
-
-    if (
-      sid?.valueBlock?.valueHex
-    ) {
-      const sidBytes =
-        new Uint8Array(
-          sid.valueBlock.valueHex
-        );
-
-      for (
-        const item of certificates
-      ) {
-        if (
-          !(item instanceof pkijs.Certificate)
-        ) {
-          continue;
-        }
-
-        const ski =
-          getSubjectKeyIdentifier(
-            item
-          );
-
-        if (
-          ski &&
-          compareUint8Arrays(
-            ski,
-            sidBytes
-          )
-        ) {
-          return item;
-        }
-      }
-    }
-
-    /*
-     * Last fallback:
-     *
-     * Return the first X.509 certificate.
-     *
-     * This is only a fallback. The actual PKI.js verify()
-     * result is preferred when available.
-     */
+    // --------------------------------------------------------
+    // FALLBACK - FIRST X509 CERTIFICATE
+    // --------------------------------------------------------
 
     for (
       const item of certificates
     ) {
+
       if (
-        item instanceof pkijs.Certificate
+        item instanceof
+        pkijs.Certificate
       ) {
+
         return item;
+
       }
+
     }
 
     return null;
 
   } catch {
+
     return null;
+
   }
+
 }
 
-/* ============================================================
-   APPLY CERTIFICATE INFO
-   ============================================================ */
 
-function applyCertificateInfo(
-  result,
-  certificate
+// ============================================================
+// COMPARE ARRAY BUFFERS
+// ============================================================
+
+function compareArrayBuffers(
+  a,
+  b
 ) {
-  if (!certificate) {
-    return;
+
+  if (!a || !b) {
+
+    return false;
+
   }
 
-  result.verification
-    .certificatePresent = true;
+  const aa =
+    new Uint8Array(a);
 
-  result.verification.signer =
-    getCertificateSubject(
-      certificate
-    );
+  const bb =
+    new Uint8Array(b);
 
-  result.verification.issuer =
-    getCertificateIssuer(
-      certificate
-    );
+  if (
+    aa.length !==
+    bb.length
+  ) {
 
-  result.verification.serialNumber =
-    safeCertificateSerial(
-      certificate
-    );
+    return false;
+
+  }
+
+  for (
+    let i = 0;
+    i < aa.length;
+    i++
+  ) {
+
+    if (
+      aa[i] !==
+      bb[i]
+    ) {
+
+      return false;
+
+    }
+
+  }
+
+  return true;
+
 }
 
-/* ============================================================
-   CERTIFICATE SUBJECT
-   ============================================================ */
+
+// ============================================================
+// CERTIFICATE SUBJECT
+// ============================================================
 
 function getCertificateSubject(
   cert
 ) {
+
   try {
+
     const values =
       cert?.subject
         ?.typesAndValues ||
       [];
 
-    const parts = [];
+    const result =
+      values
+        .map(item =>
+          getNameValue(item)
+        )
+        .filter(Boolean)
+        .join(", ");
 
-    for (
-      const item of values
-    ) {
-      try {
-        const oid =
-          item?.type || "";
-
-        const value =
-          getASN1StringValue(
-            item?.value
-          );
-
-        if (value) {
-          parts.push(
-            oid
-              ? `${oid}=${value}`
-              : value
-          );
-        }
-      } catch {
-        /* ignore malformed field */
-      }
-    }
-
-    return (
-      parts.join(", ") ||
-      "Certificate subject available"
-    );
+    return result ||
+      "Certificate subject available";
 
   } catch {
+
     return "Certificate subject unavailable";
+
   }
+
 }
 
-/* ============================================================
-   CERTIFICATE ISSUER
-   ============================================================ */
+
+// ============================================================
+// CERTIFICATE ISSUER
+// ============================================================
 
 function getCertificateIssuer(
   cert
 ) {
+
   try {
+
     const values =
       cert?.issuer
         ?.typesAndValues ||
       [];
 
-    const parts = [];
+    const result =
+      values
+        .map(item =>
+          getNameValue(item)
+        )
+        .filter(Boolean)
+        .join(", ");
 
-    for (
-      const item of values
-    ) {
-      try {
-        const oid =
-          item?.type || "";
-
-        const value =
-          getASN1StringValue(
-            item?.value
-          );
-
-        if (value) {
-          parts.push(
-            oid
-              ? `${oid}=${value}`
-              : value
-          );
-        }
-      } catch {
-        /* ignore malformed field */
-      }
-    }
-
-    return (
-      parts.join(", ") ||
-      "Certificate issuer available"
-    );
+    return result ||
+      "Certificate issuer available";
 
   } catch {
+
     return "Certificate issuer unavailable";
+
   }
+
 }
 
-/* ============================================================
-   ASN.1 STRING VALUE
-   ============================================================ */
 
-function getASN1StringValue(
-  value
+// ============================================================
+// NAME VALUE
+// ============================================================
+
+function getNameValue(
+  item
 ) {
+
   try {
-    if (!value) {
-      return "";
+
+    const value =
+      item?.value
+        ?.valueBlock
+        ?.value;
+
+    if (
+      typeof value ===
+      "string"
+    ) {
+
+      return value;
+
     }
 
     if (
-      typeof value.valueBlock?.value ===
-      "string"
+      value !== undefined &&
+      value !== null
     ) {
-      return value.valueBlock.value;
+
+      return String(value);
+
     }
 
-    if (
-      typeof value.value ===
-      "string"
-    ) {
-      return value.value;
-    }
-
-    return String(
-      value.valueBlock?.value ??
-      ""
-    );
+    return "";
 
   } catch {
+
     return "";
+
   }
+
 }
 
-/* ============================================================
-   SERIAL NUMBER
-   ============================================================ */
+
+// ============================================================
+// CERTIFICATE SERIAL
+// ============================================================
 
 function safeCertificateSerial(
   cert
 ) {
+
   try {
+
     const valueHex =
       cert
         ?.serialNumber
@@ -1210,7 +1297,9 @@ function safeCertificateSerial(
         ?.valueHex;
 
     if (!valueHex) {
+
       return null;
+
     }
 
     return bytesToHex(
@@ -1220,129 +1309,191 @@ function safeCertificateSerial(
     );
 
   } catch {
+
     return null;
+
   }
+
 }
 
-/* ============================================================
-   SUBJECT KEY IDENTIFIER
-   ============================================================ */
 
-function getSubjectKeyIdentifier(
+// ============================================================
+// CERTIFICATE VALIDITY
+// ============================================================
+
+function getCertificateValidity(
   cert
 ) {
+
   try {
-    const extensions =
-      cert?.extensions || [];
 
-    for (
-      const extension of extensions
+    const notBefore =
+      cert?.notBefore?.value;
+
+    const notAfter =
+      cert?.notAfter?.value;
+
+    if (
+      !notBefore ||
+      !notAfter
     ) {
-      /*
-       * OID 2.5.29.14 = Subject Key Identifier
-       */
 
-      if (
-        extension.extnID ===
-        "2.5.29.14"
-      ) {
-        const parsed =
-          asn1js.fromBER(
-            extension.extnValue.valueBlock.valueHex
-          );
+      return {
 
-        if (
-          parsed.offset !== -1 &&
-          parsed.result
-        ) {
-          return new Uint8Array(
-            parsed.result.valueBlock.valueHex
-          );
-        }
-      }
+        valid: false,
+
+        status: "NOT_AVAILABLE",
+
+        validFrom: null,
+
+        validUntil: null
+
+      };
+
     }
 
-    return null;
+    const now =
+      new Date();
+
+    const from =
+      new Date(notBefore);
+
+    const until =
+      new Date(notAfter);
+
+    let status =
+      "VALID";
+
+    let valid =
+      true;
+
+    if (
+      now < from
+    ) {
+
+      status =
+        "NOT_YET_VALID";
+
+      valid =
+        false;
+
+    }
+
+    else if (
+      now > until
+    ) {
+
+      status =
+        "EXPIRED";
+
+      valid =
+        false;
+
+    }
+
+    return {
+
+      valid,
+
+      status,
+
+      validFrom:
+        formatDateTime(from),
+
+      validUntil:
+        formatDateTime(until)
+
+    };
 
   } catch {
-    return null;
+
+    return {
+
+      valid: false,
+
+      status: "NOT_AVAILABLE",
+
+      validFrom: null,
+
+      validUntil: null
+
+    };
+
   }
+
 }
 
-/* ============================================================
-   COMPARE ARRAY BUFFERS
-   ============================================================ */
 
-function compareArrayBuffers(
-  a,
-  b
+// ============================================================
+// FORMAT DATE
+// ============================================================
+
+function formatDateTime(
+  date
 ) {
-  if (!a || !b) {
-    return false;
-  }
 
-  return compareUint8Arrays(
-    new Uint8Array(a),
-    new Uint8Array(b)
-  );
-}
+  try {
 
-/* ============================================================
-   COMPARE UINT8 ARRAYS
-   ============================================================ */
+    if (
+      !(date instanceof Date) ||
+      Number.isNaN(
+        date.getTime()
+      )
+    ) {
 
-function compareUint8Arrays(
-  a,
-  b
-) {
-  if (
-    !a ||
-    !b ||
-    a.length !== b.length
-  ) {
-    return false;
-  }
+      return null;
 
-  for (
-    let i = 0;
-    i < a.length;
-    i++
-  ) {
-    if (a[i] !== b[i]) {
-      return false;
     }
+
+    return date.toISOString();
+
+  } catch {
+
+    return null;
+
   }
 
-  return true;
 }
 
-/* ============================================================
-   BYTES -> HEX
-   ============================================================ */
+
+// ============================================================
+// BYTES -> HEX
+// ============================================================
 
 function bytesToHex(
   bytes
 ) {
+
   return Array
     .from(bytes)
     .map(
-      byte =>
-        byte
+      b =>
+        b
           .toString(16)
           .padStart(2, "0")
     )
     .join("");
+
 }
 
-/* ============================================================
-   FRONTEND
-   ============================================================ */
+
+// ============================================================
+// FRONTEND
+// ============================================================
 
 const FRONTEND_HTML = `<!DOCTYPE html>
+
 <html lang="en">
+
 <head>
+
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1.0">
+
+<meta
+  name="viewport"
+  content="width=device-width,initial-scale=1.0"
+>
+
 <title>DSC Verifier</title>
 
 <style>
@@ -1354,7 +1505,12 @@ const FRONTEND_HTML = `<!DOCTYPE html>
 body{
   margin:0;
   min-height:100vh;
-  font-family:Arial,Helvetica,sans-serif;
+
+  font-family:
+    Arial,
+    Helvetica,
+    sans-serif;
+
   color:#fff;
 
   background:
@@ -1363,18 +1519,23 @@ body{
       #183a91 0%,
       transparent 35%
     ),
+
     radial-gradient(
       circle at 90% 90%,
       #006d66 0%,
       transparent 35%
     ),
+
     #06101f;
 }
 
 .container{
   width:min(1050px,94%);
   margin:auto;
-  padding:55px 0 35px;
+
+  padding:
+    55px 0
+    35px;
 }
 
 .header{
@@ -1385,7 +1546,9 @@ body{
 .logo{
   width:76px;
   height:76px;
+
   margin:auto;
+
   border-radius:22px;
 
   display:flex;
@@ -1407,7 +1570,10 @@ body{
 }
 
 h1{
-  margin:20px 0 8px;
+  margin:
+    20px 0
+    8px;
+
   font-size:52px;
 }
 
@@ -1418,6 +1584,7 @@ h1{
 
 .card{
   padding:25px;
+
   border-radius:26px;
 
   background:
@@ -1427,7 +1594,8 @@ h1{
     1px solid
     rgba(255,255,255,.16);
 
-  backdrop-filter:blur(12px);
+  backdrop-filter:
+    blur(12px);
 
   box-shadow:
     0 25px 70px
@@ -1444,24 +1612,29 @@ h1{
   border-radius:22px;
 
   display:flex;
+
   align-items:center;
   justify-content:center;
 
   text-align:center;
+
   padding:30px;
 
   cursor:pointer;
+
   transition:.2s;
 }
 
 .drop:hover{
   border-color:#25bfff;
+
   background:
     rgba(30,120,220,.08);
 }
 
 .drop.dragover{
   border-color:#13c6b5;
+
   background:
     rgba(19,198,181,.12);
 }
@@ -1471,7 +1644,9 @@ h1{
 }
 
 .drop h2{
-  margin:15px 0 8px;
+  margin:
+    15px 0
+    8px;
 }
 
 .drop p{
@@ -1482,13 +1657,19 @@ input[type="file"]{
   display:none;
 }
 
+.choose-btn,
 button{
   border:0;
-  padding:15px 28px;
+
+  padding:
+    15px 28px;
+
   border-radius:12px;
 
   color:#fff;
+
   font-size:16px;
+
   font-weight:bold;
 
   cursor:pointer;
@@ -1503,8 +1684,17 @@ button{
   transition:.2s;
 }
 
+.choose-btn{
+  display:inline-flex;
+
+  align-items:center;
+  justify-content:center;
+}
+
+.choose-btn:hover,
 button:hover:not(:disabled){
-  transform:translateY(-2px);
+  transform:
+    translateY(-2px);
 
   box-shadow:
     0 10px 25px
@@ -1518,19 +1708,24 @@ button:disabled{
 
 .file{
   margin-top:20px;
+
   padding:15px;
+
   border-radius:12px;
 
   background:
     rgba(0,0,0,.25);
 
   display:none;
+
   word-break:break-word;
 }
 
 .verify{
   text-align:center;
+
   margin-top:20px;
+
   display:none;
 }
 
@@ -1541,65 +1736,76 @@ button:disabled{
 
 .status{
   padding:18px;
+
   border-radius:15px;
 
   font-size:21px;
+
   font-weight:bold;
+
   text-align:center;
 
   margin-bottom:18px;
 }
 
 .valid{
-  background:rgba(0,190,120,.14);
-  border:1px solid #19c98b;
+  background:
+    rgba(0,190,120,.14);
+
+  border:
+    1px solid
+    #19c98b;
+
   color:#42e8aa;
 }
 
+.notdetected,
 .invalid{
-  background:rgba(255,70,70,.12);
-  border:1px solid #c94b4b;
-  color:#ff7777;
-}
+  background:
+    rgba(255,70,70,.12);
 
-.notdetected{
-  background:rgba(255,70,70,.12);
-  border:1px solid #c94b4b;
+  border:
+    1px solid
+    #c94b4b;
+
   color:#ff7777;
 }
 
 .unable{
-  background:rgba(255,174,0,.12);
-  border:1px solid #c99020;
-  color:#ffc238;
-}
-
-.error{
-  margin-top:18px;
-  padding:15px;
-  border-radius:12px;
-
-  color:#ff8c8c;
-
   background:
-    rgba(255,70,70,.10);
+    rgba(255,174,0,.12);
 
   border:
     1px solid
-    rgba(255,70,70,.25);
+    #c99020;
 
-  display:none;
-  text-align:center;
+  color:#ffc238;
+}
+
+.cert-valid{
+  color:#42e8aa;
+}
+
+.cert-expired{
+  color:#ff7777;
+}
+
+.cert-future{
+  color:#ffc238;
 }
 
 .grid{
   display:grid;
-  grid-template-columns:1fr 1fr;
+
+  grid-template-columns:
+    1fr 1fr;
+
   gap:15px;
 }
 
 .box{
   padding:18px;
+
   border-radius:15px;
 
   background:
@@ -1608,19 +1814,27 @@ button:disabled{
 
 .label{
   color:#91a8c2;
+
   font-size:13px;
+
   margin-bottom:6px;
 }
 
 .value{
   font-size:17px;
+
   font-weight:bold;
+
   word-break:break-word;
+
+  line-height:1.5;
 }
 
 .note{
   margin-top:18px;
+
   padding:16px;
+
   border-radius:14px;
 
   color:#a9c8e8;
@@ -1637,8 +1851,11 @@ button:disabled{
 
 .footer{
   text-align:center;
+
   color:#6e87a4;
+
   margin-top:30px;
+
   font-size:14px;
 }
 
@@ -1646,7 +1863,10 @@ button:disabled{
 
   .container{
     width:94%;
-    padding:30px 0 25px;
+
+    padding:
+      30px 0
+      25px;
   }
 
   h1{
@@ -1672,15 +1892,18 @@ button:disabled{
   }
 
   .grid{
-    grid-template-columns:1fr;
+    grid-template-columns:
+      1fr;
   }
 
   .status{
     font-size:17px;
   }
+
 }
 
 </style>
+
 </head>
 
 <body>
@@ -1705,7 +1928,10 @@ Digital Signature Certificate Verification Tool
 
 <div class="card">
 
-<div id="drop" class="drop">
+<div
+  id="drop"
+  class="drop"
+>
 
 <div>
 
@@ -1726,6 +1952,7 @@ Select or drag & drop your digitally signed certificate PDF
 <button
   type="button"
   id="chooseBtn"
+  class="choose-btn"
 >
 📁 Choose PDF
 </button>
@@ -1832,6 +2059,21 @@ Select or drag & drop your digitally signed certificate PDF
 </div>
 
 <div class="box">
+<div class="label">CERTIFICATE STATUS</div>
+<div id="certStatus" class="value">-</div>
+</div>
+
+<div class="box">
+<div class="label">VALID FROM</div>
+<div id="validFrom" class="value">-</div>
+</div>
+
+<div class="box">
+<div class="label">VALID UNTIL</div>
+<div id="validUntil" class="value">-</div>
+</div>
+
+<div class="box">
 <div class="label">SIGNER</div>
 <div id="signer" class="value">-</div>
 </div>
@@ -1859,8 +2101,13 @@ Select or drag & drop your digitally signed certificate PDF
 
 <br><br>
 
-This tool performs cryptographic CMS/PKCS#7
+The tool performs cryptographic CMS/PKCS#7
 verification against the exact PDF ByteRange.
+
+<br><br>
+
+Certificate validity is checked separately using
+the certificate's Valid From and Valid Until dates.
 
 <br><br>
 
@@ -1912,58 +2159,67 @@ const result =
 
 let selectedFile = null;
 
-/* ==========================================================
-   CHOOSE PDF
-   ========================================================== */
+
+// ============================================================
+// FILE PICKER
+// ============================================================
 
 chooseBtn.addEventListener(
   "click",
   function(event){
 
     event.preventDefault();
+
     event.stopPropagation();
 
     input.click();
+
   }
 );
+
 
 drop.addEventListener(
   "click",
   function(event){
 
-    if(
-      event.target === chooseBtn
-    ){
+    if (
+      event.target ===
+      chooseBtn
+    ) {
+
       return;
+
     }
 
     input.click();
+
   }
 );
 
-/* ==========================================================
-   FILE INPUT
-   ========================================================== */
 
 input.addEventListener(
   "change",
   function(){
 
-    if(
+    if (
       !input.files.length
-    ){
+    ) {
+
       return;
+
     }
 
     handleFile(
       input.files[0]
     );
+
   }
 );
 
-/* ==========================================================
-   DRAG & DROP
-   ========================================================== */
+
+// ============================================================
+// DRAG & DROP
+// ============================================================
 
 drop.addEventListener(
   "dragover",
@@ -1974,8 +2230,10 @@ drop.addEventListener(
     drop.classList.add(
       "dragover"
     );
+
   }
 );
+
 
 drop.addEventListener(
   "dragleave",
@@ -1984,8 +2242,10 @@ drop.addEventListener(
     drop.classList.remove(
       "dragover"
     );
+
   }
 );
+
 
 drop.addEventListener(
   "drop",
@@ -2000,22 +2260,26 @@ drop.addEventListener(
     const files =
       event.dataTransfer.files;
 
-    if(
+    if (
       !files ||
       !files.length
-    ){
+    ) {
+
       return;
+
     }
 
     handleFile(
       files[0]
     );
+
   }
 );
 
-/* ==========================================================
-   HANDLE FILE
-   ========================================================== */
+
+// ============================================================
+// HANDLE FILE
+// ============================================================
 
 function handleFile(file){
 
@@ -2037,33 +2301,34 @@ function handleFile(file){
       .toLowerCase()
       .endsWith(".pdf");
 
-  if(!isPDF){
+  if (!isPDF) {
 
     showError(
       "❌ Please select a valid PDF file."
     );
 
     input.value = "";
-    selectedFile = null;
 
     return;
+
   }
 
   const MAX_SIZE =
     20 * 1024 * 1024;
 
-  if(
-    file.size > MAX_SIZE
-  ){
+  if (
+    file.size >
+    MAX_SIZE
+  ) {
 
     showError(
       "❌ PDF size must be below 20 MB."
     );
 
     input.value = "";
-    selectedFile = null;
 
     return;
+
   }
 
   selectedFile =
@@ -2082,23 +2347,26 @@ function handleFile(file){
 
   verifyBox.style.display =
     "block";
+
 }
 
-/* ==========================================================
-   VERIFY
-   ========================================================== */
+
+// ============================================================
+// VERIFY
+// ============================================================
 
 verifyBtn.addEventListener(
   "click",
   async function(){
 
-    if(!selectedFile){
+    if (!selectedFile) {
 
       showError(
         "Please select a PDF first."
       );
 
       return;
+
     }
 
     clearError();
@@ -2117,142 +2385,235 @@ verifyBtn.addEventListener(
       selectedFile
     );
 
-    try{
+    try {
 
       const response =
         await fetch(
           "/api/verify",
           {
-            method:"POST",
-            body:formData
+            method: "POST",
+            body: formData
           }
         );
 
       const data =
         await response.json();
 
-      if(
+      if (
         !response.ok ||
         !data.success
-      ){
+      ) {
 
         throw new Error(
           data.error ||
           "Verification failed."
         );
+
       }
 
       result.style.display =
         "block";
 
-      document.getElementById(
-        "fileName"
-      ).textContent =
-        data.file.name;
+      // ------------------------------------------------------
+      // BASIC INFORMATION
+      // ------------------------------------------------------
 
-      document.getElementById(
-        "fileSize"
-      ).textContent =
+      setText(
+        "fileName",
+        data.file.name
+      );
+
+      setText(
+        "fileSize",
         formatBytes(
           data.file.size
-        );
+        )
+      );
 
-      document.getElementById(
-        "pdfValid"
-      ).textContent =
+      setText(
+        "pdfValid",
         data.pdf.validHeader
           ? "✓ Valid PDF"
-          : "✗ Invalid PDF";
+          : "✗ Invalid PDF"
+      );
 
-      document.getElementById(
-        "byteRange"
-      ).textContent =
-        data.signatureStructure
-          .byteRangeValid
+      setText(
+        "byteRange",
+        data.signatureStructure.byteRangeValid
           ? "✓ Valid"
-          : "✗ Invalid";
+          : "✗ Invalid"
+      );
 
-      document.getElementById(
-        "contents"
-      ).textContent =
+      setText(
+        "contents",
         data.signatureStructure.contents
           ? "✓ Found"
-          : "✗ Not Found";
+          : "✗ Not Found"
+      );
 
-      document.getElementById(
-        "sigType"
-      ).textContent =
+      setText(
+        "sigType",
         data.signatureStructure.signatureType
           ? "✓ Found"
-          : "✗ Not Found";
+          : "✗ Not Found"
+      );
 
-      document.getElementById(
-        "pkcs7"
-      ).textContent =
+      setText(
+        "pkcs7",
         data.signatureStructure.pkcs7SubFilter
           ? "✓ Found"
-          : "✗ Not Found";
+          : "✗ Not Found"
+      );
 
-      document.getElementById(
-        "sigDictionary"
-      ).textContent =
-        data.signatureStructure
-          .signatureDictionary
+      setText(
+        "sigDictionary",
+        data.signatureStructure.signatureDictionary
           ? "✓ Found"
-          : "✗ Not Found";
+          : "✗ Not Found"
+      );
 
-      document.getElementById(
-        "cryptoStatus"
-      ).textContent =
+      // ------------------------------------------------------
+      // CRYPTO
+      // ------------------------------------------------------
+
+      setText(
+        "cryptoStatus",
         data.verification
           .cryptographicVerification
           ? "✓ VALID"
-          : "✗ NOT VERIFIED";
+          : "✗ NOT VERIFIED"
+      );
 
-      document.getElementById(
-        "integrity"
-      ).textContent =
+      setText(
+        "integrity",
         data.verification
           .documentIntegrity
           ? "✓ INTACT"
-          : "✗ NOT VERIFIED";
+          : "✗ NOT VERIFIED"
+      );
 
-      document.getElementById(
-        "certificate"
-      ).textContent =
+      setText(
+        "certificate",
         data.verification
           .certificatePresent
           ? "✓ Found"
-          : "✗ Not Found";
+          : "✗ Not Found"
+      );
 
-      document.getElementById(
-        "signer"
-      ).textContent =
+      // ------------------------------------------------------
+      // CERTIFICATE VALIDITY
+      // ------------------------------------------------------
+
+      const certStatus =
         data.verification
-          .signer ||
-        "-";
+          .certificateStatus;
 
-      document.getElementById(
-        "issuer"
-      ).textContent =
-        data.verification
-          .issuer ||
-        "-";
+      const certElement =
+        document.getElementById(
+          "certStatus"
+        );
 
-      document.getElementById(
-        "serial"
-      ).textContent =
-        data.verification
-          .serialNumber ||
-        "-";
+      certElement.className =
+        "value";
 
-      document.getElementById(
-        "chain"
-      ).textContent =
+      if (
+        certStatus ===
+        "VALID"
+      ) {
+
+        certElement.classList.add(
+          "cert-valid"
+        );
+
+        certElement.textContent =
+          "✓ VALID";
+
+      }
+
+      else if (
+        certStatus ===
+        "EXPIRED"
+      ) {
+
+        certElement.classList.add(
+          "cert-expired"
+        );
+
+        certElement.textContent =
+          "✗ EXPIRED";
+
+      }
+
+      else if (
+        certStatus ===
+        "NOT_YET_VALID"
+      ) {
+
+        certElement.classList.add(
+          "cert-future"
+        );
+
+        certElement.textContent =
+          "⚠ NOT YET VALID";
+
+      }
+
+      else {
+
+        certElement.textContent =
+          "Not Available";
+
+      }
+
+      setText(
+        "validFrom",
+        formatCertificateDate(
+          data.verification.validFrom
+        )
+      );
+
+      setText(
+        "validUntil",
+        formatCertificateDate(
+          data.verification.validUntil
+        )
+      );
+
+      // ------------------------------------------------------
+      // SIGNER INFORMATION
+      // ------------------------------------------------------
+
+      setText(
+        "signer",
+        cleanCertificateText(
+          data.verification.signer
+        )
+      );
+
+      setText(
+        "issuer",
+        cleanCertificateText(
+          data.verification.issuer
+        )
+      );
+
+      setText(
+        "serial",
+        data.verification.serialNumber ||
+        "-"
+      );
+
+      setText(
+        "chain",
         data.verification
           .certificateChainVerified
           ? "✓ Verified"
-          : "Not checked";
+          : "Not checked"
+      );
+
+      // ------------------------------------------------------
+      // MAIN STATUS
+      // ------------------------------------------------------
 
       const status =
         document.getElementById(
@@ -2262,10 +2623,10 @@ verifyBtn.addEventListener(
       const verificationStatus =
         data.verification.status;
 
-      if(
+      if (
         verificationStatus ===
         "CRYPTOGRAPHICALLY_VALID"
-      ){
+      ) {
 
         status.className =
           "status valid";
@@ -2274,10 +2635,11 @@ verifyBtn.addEventListener(
           "✅ DIGITAL SIGNATURE CRYPTOGRAPHICALLY VALID";
 
       }
-      else if(
+
+      else if (
         verificationStatus ===
         "INVALID"
-      ){
+      ) {
 
         status.className =
           "status invalid";
@@ -2286,10 +2648,11 @@ verifyBtn.addEventListener(
           "❌ DIGITAL SIGNATURE INVALID";
 
       }
-      else if(
+
+      else if (
         verificationStatus ===
         "NO_SIGNATURE"
-      ){
+      ) {
 
         status.className =
           "status notdetected";
@@ -2298,22 +2661,25 @@ verifyBtn.addEventListener(
           "❌ DIGITAL SIGNATURE NOT DETECTED";
 
       }
-      else{
+
+      else {
 
         status.className =
           "status unable";
 
         status.textContent =
           "⚠️ SIGNATURE DETECTED — UNABLE TO VERIFY";
+
       }
 
       result.scrollIntoView({
-        behavior:"smooth",
-        block:"start"
+        behavior: "smooth",
+        block: "start"
       });
 
     }
-    catch(error){
+
+    catch(error) {
 
       showError(
         "❌ " +
@@ -2324,25 +2690,130 @@ verifyBtn.addEventListener(
       );
 
     }
-    finally{
+
+    finally {
 
       verifyBtn.disabled =
         false;
 
       verifyBtn.textContent =
         "🔍 Verify PDF";
+
     }
+
   }
 );
 
-/* ==========================================================
-   FORMAT BYTES
-   ========================================================== */
 
-function formatBytes(bytes){
+// ============================================================
+// SET TEXT
+// ============================================================
 
-  if(bytes === 0){
+function setText(
+  id,
+  value
+){
+
+  const element =
+    document.getElementById(id);
+
+  if (element) {
+
+    element.textContent =
+      value || "-";
+
+  }
+
+}
+
+
+// ============================================================
+// CLEAN CERTIFICATE TEXT
+// ============================================================
+
+function cleanCertificateText(
+  value
+){
+
+  if (
+    !value ||
+    value === "-"
+  ) {
+
+    return "-";
+
+  }
+
+  return String(value)
+    .replace(
+      /,\s*/g,
+      ", "
+    )
+    .replace(
+      /\s+/g,
+      " "
+    )
+    .trim();
+
+}
+
+
+// ============================================================
+// DATE FORMAT
+// ============================================================
+
+function formatCertificateDate(
+  value
+){
+
+  if (!value) {
+
+    return "-";
+
+  }
+
+  const date =
+    new Date(value);
+
+  if (
+    Number.isNaN(
+      date.getTime()
+    )
+  ) {
+
+    return value;
+
+  }
+
+  return date.toLocaleString(
+    "en-IN",
+    {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit"
+    }
+  );
+
+}
+
+
+// ============================================================
+// BYTES
+// ============================================================
+
+function formatBytes(
+  bytes
+){
+
+  if (
+    bytes === 0
+  ) {
+
     return "0 Bytes";
+
   }
 
   const units = [
@@ -2367,25 +2838,30 @@ function formatBytes(bytes){
           i
         )
       ).toFixed(2)
-    )
-    +
+    ) +
     " " +
     units[i]
   );
+
 }
 
-/* ==========================================================
-   ERROR
-   ========================================================== */
 
-function showError(message){
+// ============================================================
+// ERROR
+// ============================================================
+
+function showError(
+  message
+){
 
   errorBox.style.display =
     "block";
 
   errorBox.textContent =
     message;
+
 }
+
 
 function clearError(){
 
@@ -2394,9 +2870,11 @@ function clearError(){
 
   errorBox.textContent =
     "";
+
 }
 
 </script>
 
 </body>
+
 </html>`;
